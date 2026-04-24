@@ -3,13 +3,13 @@ import os
 import pandas as pd
 from utils import process_pdfs, get_answer
 
-st.set_page_config(page_title="Resume RAG Chatbot", layout="wide")
+st.set_page_config(page_title="Resume ATS System", layout="wide")
 
 st.title("📄 Resume RAG Chatbot (ATS Ranking System)")
 
 
 # -----------------------------
-# Upload PDFs
+# UPLOAD RESUMES
 # -----------------------------
 uploaded_files = st.file_uploader(
     "Upload multiple resumes (PDF)",
@@ -22,7 +22,7 @@ if "vectorstore" not in st.session_state:
 
 
 # -----------------------------
-# Process Resumes
+# PROCESS RESUMES
 # -----------------------------
 if uploaded_files and st.button("Process Resumes"):
     with st.spinner("Processing resumes..."):
@@ -41,9 +41,9 @@ if uploaded_files and st.button("Process Resumes"):
 
 
 # -----------------------------
-# Query Section
+# QUERY SECTION
 # -----------------------------
-query = st.text_input("Ask something (e.g., Find Data Analyst)")
+query = st.text_input("Ask something (e.g., Find Python developer)")
 
 if query and st.session_state.vectorstore:
     with st.spinner("Ranking candidates..."):

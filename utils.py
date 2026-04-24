@@ -1,10 +1,9 @@
+import re
+import spacy
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-
-import spacy
-import re
 from sentence_transformers import SentenceTransformer, util
 
 # Load models
@@ -13,38 +12,15 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 # -----------------------------
-# QUERY EXPANSION (IMPORTANT)
+# ROLE → SKILL MAP (ATS INTELLIGENCE)
 # -----------------------------
 QUERY_SKILL_MAP = {
-    "data analyst": ["sql", "excel", "python", "powerbi", "tableau", "statistics"],
-    "data science": ["python", "machine learning", "sql", "statistics"],
-    "backend developer": ["node", "java", "sql", "api"],
+    "python developer": ["python", "flask", "django", "fastapi", "api", "sql"],
+    "data analyst": ["sql", "excel", "python", "powerbi", "tableau"],
+    "data scientist": ["python", "machine learning", "deep learning", "statistics"],
     "frontend developer": ["react", "html", "css", "javascript"],
-    "python developer": ["python", "django", "flask", "api"]
+    "backend developer": ["node", "java", "sql", "api"]
 }
-
-
-# -----------------------------
-# NAME EXTRACTION (FIXED)
-# -----------------------------
-def extract_name(text):
-    lines = text.split("\n")
-
-    ignore_words = ["resume", "cv", "profile", "email", "phone", "linkedin"]
-
-    for line in lines[:20]:
-        clean = line.strip()
-
-        if len(clean) < 3:
-            continue
-
-        if any(word in clean.lower() for word in ignore_words):
-            continue
-
-        if re.match(r"^[A-Z][a-z]+(\s[A-Z][a-z]+)+$", clean):
-            return clean
-
-    return "Unknown Candidate"
 
 
 # -----------------------------
@@ -69,9 +45,37 @@ def clean_text(text):
 
 
 # -----------------------------
-# SKILL EXTRACTION (NLP)
+# NAME EXTRACTION (FIXED)
 # -----------------------------
-def extract_skills_nlp(text):
+def extract_name(text):
+    lines = text.split("\n")
+
+    ignore_keywords = [
+        "resume", "cv", "profile", "education",
+        "experience", "skills", "technical",
+        "data science", "trainee", "engineer",
+        "developer", "intern"
+    ]
+
+    for line in lines[:25]:
+        clean = line.strip()
+
+        if len(clean) < 3:
+            continue
+
+        if any(word in clean.lower() for word in ignore_keywords):
+            continue
+
+        # must be real name pattern (2-3 words, capitalized)
+        if re.match(r"^[A-Z][a-z]+(\s[A-Z][a-z]+){1,2}$", clean):
+            return clean
+
+    return "Unknown Candidate"
+
+# -----------------------------
+# SKILL EXTRACTION
+# -----------------------------
+def extract_skills(text):
     skills_db = [
         "python", "java", "react", "node", "sql",
         "machine learning", "deep learning", "ai",
@@ -84,85 +88,81 @@ def extract_skills_nlp(text):
 
 
 # -----------------------------
-# SEMANTIC + QUERY AWARE SCORE
+# SCORE (SEMANTIC + ROLE INTELLIGENCE)
 # -----------------------------
 def calculate_score(text, query):
 
-    query_lower = query.lower()
+    query = query.lower()
 
-    expanded = QUERY_SKILL_MAP.get(query_lower, [query_lower])
-    expanded_query = " ".join(expanded)
+    expanded = QUERY_SKILL_MAP.get(query, [query])
+    query_text = " ".join(expanded)
 
     semantic_score = util.cos_sim(
         model.encode(text),
-        model.encode(expanded_query)
+        model.encode(query_text)
     ).item()
 
-    return round(semantic_score * 100, 2)
+    skill_hits = sum(1 for s in expanded if s in text.lower())
+
+    final_score = (semantic_score * 100) + (skill_hits * 5)
+
+    return round(final_score, 2)
 
 
 # -----------------------------
-# PROCESS PDFs
+# PROCESS PDFS
 # -----------------------------
 def process_pdfs(pdf_files):
     documents = []
 
     for pdf in pdf_files:
         loader = PyPDFLoader(pdf)
-        docs = loader.load()
+        pages = loader.load()
 
-        for doc in docs:
-            doc.metadata["source"] = pdf
-            doc.page_content = clean_text(doc.page_content)
+        full_text = ""
 
-        documents.extend(docs)
+        for page in pages:
+            full_text += page.page_content + " "
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,
-        chunk_overlap=150
-    )
+        full_text = clean_text(full_text)
 
-    chunks = splitter.split_documents(documents)
+        # IMPORTANT: treat each resume as ONE document
+        documents.append({
+            "page_content": full_text,
+            "metadata": {"source": pdf}
+        })
+
+    # Convert to LangChain documents manually
+    from langchain_core.documents import Document
+
+    docs = [
+        Document(page_content=d["page_content"], metadata=d["metadata"])
+        for d in documents
+    ]
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore = FAISS.from_documents(docs, embeddings)
 
     return vectorstore
 
-
 # -----------------------------
-# GET ANSWER (ATS LOGIC)
+# GET ANSWER (ATS LOGIC FIXED)
 # -----------------------------
 def get_answer(vectorstore, query):
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
-    docs = retriever.invoke(query)
-
-    if not docs:
-        return []
-
-    resume_map = {}
-
-    for doc in docs:
-        text = doc.page_content
-        source = doc.metadata.get("source", "unknown")
-
-        if source not in resume_map:
-            resume_map[source] = {"text": ""}
-
-        resume_map[source]["text"] += " " + text
+    docs = vectorstore.similarity_search(query, k=5)
 
     results = []
 
-    for source, data in resume_map.items():
-        full_text = data["text"]
+    for doc in docs:
+        full_text = doc.page_content
+        source = doc.metadata.get("source", "unknown")
 
         name = extract_name(full_text)
-        skills = extract_skills_nlp(full_text)
-
+        skills = extract_skills(full_text)
         score = calculate_score(full_text, query)
 
         results.append({
