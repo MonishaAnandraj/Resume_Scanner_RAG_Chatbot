@@ -55,8 +55,8 @@ It acts like a mini **ATS (Applicant Tracking System)** that helps recruiters au
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/your-username/resume-rag-chatbot.git
-cd resume-rag-chatbot
+git clone https://github.com/MonishaAnandraj/Resume_Scanner_RAG_Chatbot.git
+cd Resume_Scanner_RAG_Chatbot
 ```
 
 ---
